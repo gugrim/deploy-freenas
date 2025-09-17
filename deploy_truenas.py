@@ -237,7 +237,20 @@ with Client(
                     values = {"network": {"certificate_id": cert_id}}
                     if port_number:
                         values["network"]["web_port"] = {"port_number": port_number}
-                    result=c.call("app.update", app["id"], {"values": values}, job=True)
+                    job = c.call("app.update", app["id"], {"values": values}, job='RETURN')
+                    # Ugly access to protected attributes. Is there a better way?
+                    with job.client._jobs_lock:
+                        cjob = job.client._jobs[job.job_id]
+                    for i in range(120):
+                        state = cjob['state']
+                        logger.debug(f"Waiting for update of {app['id']}. State: "+state)
+                        if state in ('SUCCESS', 'FAILED', 'ABORTED'):
+                            break
+                        c.ping()
+                        job.event.wait(5.0)
+                    else:
+                        logger.error(f"Giving up waiting for update of {app['id']}.")
+                    result = job.result()
                     logger.debug(result)
                     logger.info(f"App {app['id']} updated to {cert_name}")
                 except Exception as e:
